@@ -1,6 +1,8 @@
 #!/usr/bin/env python3
 #
 # Copyright 2017 rootkiwi
+# bodged up by joppiesaus in 2018 to just render it to a json file instead of using notify
+# 
 #
 # AN2Linux-server is licensed under GNU General Public License 3, with the additional
 # special exception to link portions of this program with the OpenSSL library.
@@ -21,13 +23,6 @@ except ImportError as e:
     print('Dependency missing: python-gobject')
     print(e)
     sys.exit(1)
-try:
-    gi.require_version('Notify', '0.7')
-    from gi.repository import Notify
-except (ImportError, ValueError) as e:
-    print('Dependency missing: libnotify')
-    print(e)
-    sys.exit(1)
 import threading
 import datetime
 import os
@@ -44,7 +39,10 @@ import hashlib
 import termios
 import base64
 import select
+import json
+from pprint import pprint
 from collections import deque
+
 
 def chkflags(flags, flag):
     return flags & flag == flag
@@ -56,6 +54,12 @@ class Notification:
 
     # this is a list of notification titles to ignore latest_notifications list
     titles_that_ignore_latest = None
+    
+    # path of JSON file to save the notifications to
+    path = None
+    
+    # max notifications to save
+    limit = None
 
     '''this is to keep a list of active Notification objects with icons to avoid being garbage collected
     because when a Notification object is garbage collected the TemporaryFile is destroyed
@@ -75,19 +79,26 @@ class Notification:
     def show(self):
         if self.notif_hash not in Notification.latest_notifications or self.title in Notification.titles_that_ignore_latest:
             Notification.latest_notifications.append(self.notif_hash)
-            Notify.init('AN2Linux')
-            self.notif = Notify.Notification.new(self.title, self.message, self.icon_path)
-            self.notif.set_timeout(notification_timeout_milliseconds)
-            if self.icon_tmp_file is not None:
-                Notification.active_notifications_with_icons.append(self)
-                self.notif.connect('closed', self.closed_callback)
+            
+            data = []
+            # read current notifications
             try:
-                self.notif.show()
+                with open(Notification.path) as f:
+                    data = json.load(f)
+            except:
+                pass # just do nothing
+            
+            data.insert(0, { "title": self.title, "message": self.message }) # prepend
+            data = data[:Notification.limit] # limit
+            #pprint(data)
+            
+            # write them to tha file
+            try:
+                with open(Notification.path, "w") as f:
+                    json.dump(data, f)
             except Exception as e:
-                print_with_timestamp('(Notification) Error showing notification:' \
-                        ' {}'.format(e));
-                print_with_timestamp('Please make sure you have a notification' \
-                        ' server installed on your system')
+                print_with_timestamp('(Notification) Error writing notification to file:' \
+                    ' {}'.format(e));
 
     def closed_callback(self, notif_instance):
         self.icon_tmp_file.close()
@@ -666,6 +677,11 @@ def create_default_config_file_and_exit():
     config_parser.set('notification', '\n# ignore_duplicates_list_for_titles: notification titles that ignore duplicates list')
     config_parser.set('notification', '# comma-separated, case-sensitive')
     config_parser.set('notification', 'ignore_duplicates_list_for_titles', 'AN2Linux, title')
+    config_parser.set('notification', "\n# path to render the notifcations")
+    config_parser.set('notification', "notification_path", "output.json")
+    config_parser.set('notification', "\n# limit max notifcations")
+    config_parser.set('notification', "max_notifications", "10")
+    
     with open(CONF_FILE_PATH, 'w') as configfile:
         config_parser.write(configfile)
     print_with_timestamp('Created new default configuration file at "{}"'.format(CONF_FILE_PATH))
@@ -681,6 +697,10 @@ def parse_config_or_create_new():
         try:
             config_parser = configparser.ConfigParser(allow_no_value=True)
             config_parser.read(CONF_FILE_PATH)
+            
+            Notification.path = config_parser.get("notification", "notification_path")
+            Notification.limit = config_parser.getint('notification', 'max_notifications')
+            
             tcp_server_enabled = config_parser.getboolean('tcp', 'tcp_server')
             tcp_port_number = config_parser.getint('tcp', 'tcp_port')
             if tcp_port_number < 0 or tcp_port_number > 65535:
@@ -698,6 +718,10 @@ def parse_config_or_create_new():
             Notification.latest_notifications = deque(maxlen=list_size_duplicates)
             ignore_duplicates_list_for_titles = config_parser.get('notification', 'ignore_duplicates_list_for_titles')
             Notification.titles_that_ignore_latest = [title.strip() for title in ignore_duplicates_list_for_titles.split(',')]
+            
+            
+            
+            
             try:
                 bluetooth_support_kitkat = config_parser.getboolean('bluetooth', 'bluetooth_support_kitkat')
             except (configparser.Error, ValueError):
@@ -846,6 +870,9 @@ if __name__ == '__main__':
             bluetooth_server_enabled = False
             print_with_timestamp('Dependency missing: python-bluez')
             print(e)
+    
+    # test
+    #Notification("derp", "test", hashlib.sha256("ayy".encode()).digest()).show()
 
     # so we can recieve callbacks from notifications being closed
     main_loop = GLib.MainLoop()
