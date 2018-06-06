@@ -22,12 +22,6 @@ Arch: python
 Debian / Ubuntu: python3
 ```
 
-* **libnotify**
-```
-Arch: libnotify
-Debian / Ubuntu: libnotify4 gir1.2-notify-0.7 gir1.2-gdkpixbuf-2.0
-```
-
 * **python-gobject**
 ```
 Arch: python-gobject
